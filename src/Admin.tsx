@@ -39,7 +39,7 @@ function useToken(clave: string) {
   };
 }
 
-type Fila = { codigo: string; grupo: string; consentimiento: boolean; sesionActual: number; nivelesResueltos: number; ultimoAcceso: string | null };
+type Fila = { codigo: string; grupo: string; consentimiento: boolean; sesionActual: number; nivelesResueltos: number; preprueba?: boolean; posprueba?: boolean; ultimoAcceso: string | null };
 export function TeacherRemote() {
   const a = useToken("lq-adm-doc");
   const [filas, setFilas] = useState<Fila[]>([]);
@@ -82,6 +82,8 @@ export function TeacherRemote() {
                 <th>Consentimiento</th>
                 <th>Sesión actual</th>
                 <th>Niveles resueltos</th>
+                <th>Preprueba</th>
+                <th>Posprueba</th>
                 <th>Último acceso</th>
               </tr>
             </thead>
@@ -97,12 +99,14 @@ export function TeacherRemote() {
                   <td>
                     {r.nivelesResueltos} / {total}
                   </td>
+                  <td><span className={`status-dot ${r.preprueba ? "ok" : ""}`}>{r.preprueba ? "Enviada" : "Pendiente"}</span></td>
+                  <td><span className={`status-dot ${r.posprueba ? "ok" : ""}`}>{r.posprueba ? "Enviada" : "Pendiente"}</span></td>
                   <td>{r.ultimoAcceso ? new Date(r.ultimoAcceso).toLocaleString("es-CO") : "—"}</td>
                 </tr>
               ))}
               {!filas.length && (
                 <tr>
-                  <td colSpan={6} className="empty-state">
+                  <td colSpan={8} className="empty-state">
                     Aún no hay códigos. Genera algunos abajo y repártelos de forma anónima.
                   </td>
                 </tr>
@@ -146,8 +150,9 @@ export function TeacherRemote() {
 }
 
 const archivos: [string, string][] = [
+  ["rendimiento", "Prueba de desempeño (preprueba y posprueba)"],
   ["respuestas", "Respuestas por ítem"],
-  ["resumen", "Resumen (puntaje SUS y medias por subescala)"],
+  ["resumen", "Resumen (puntajes de la prueba, SUS y medias por subescala)"],
   ["progreso", "Progreso por nivel"],
   ["reflexiones", "Reflexiones por sesión"],
 ];

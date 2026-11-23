@@ -122,3 +122,41 @@ test("límite de intentos de inicio de sesión", async () => {
   server.close();
   assert.equal(ultimo, 429);
 });
+
+test("prueba de desempeño: un intento por momento, posprueba después de la preprueba, calificada en el servidor", async () => {
+  const { formas } = await import("../src/prueba.ts");
+  const e = await nuevoEstudiante("control");
+  const cuerpo = (momento: string, respuestas: (number | null)[]) => ({
+    momento,
+    respuestas,
+    tiempos: Array(9).fill(1500),
+    inicio: new Date(Date.now() - 60_000).toISOString(),
+    fin: new Date().toISOString(),
+  });
+  const claveB = formas.B.map((x) => x.correcta);
+  assert.equal((await call("PUT", "/api/prueba", cuerpo("final", claveB), e.token)).status, 409);
+  assert.equal((await call("PUT", "/api/prueba", cuerpo("inicial", [9, ...Array(8).fill(0)]), e.token)).status, 400);
+  assert.equal((await call("PUT", "/api/prueba", { ...cuerpo("inicial", Array(9).fill(0)), tiempos: [1] }, e.token)).status, 400);
+  const pre = [formas.A[0].correcta, null, ...Array(7).fill(0)];
+  assert.equal((await call("PUT", "/api/prueba", cuerpo("inicial", pre), e.token)).status, 200);
+  assert.equal((await call("PUT", "/api/prueba", cuerpo("inicial", pre), e.token)).status, 409);
+  assert.equal((await call("PUT", "/api/prueba", cuerpo("final", claveB), e.token)).status, 200);
+
+  const reg = (await call("GET", "/api/mi-registro", undefined, e.token)).json();
+  assert.equal(reg.pruebas.length, 2);
+  assert.equal(reg.pruebas.find((p: any) => p.momento === "inicial").respuestas[1], null);
+
+  const csv = (await call("GET", "/api/export/rendimiento.csv", undefined, INV)).text;
+  const filas = csv.split("\r\n").filter((l) => l.includes(e.codigo));
+  assert.equal(filas.length, 18);
+  assert.ok(filas.some((l) => l.includes('"final","B",1,"regla"')));
+  const resumen = (await call("GET", "/api/export/resumen.csv", undefined, INV)).text;
+  assert.ok(resumen.includes(`"${e.codigo}","control","Prueba","final","puntaje",100`));
+
+  const docente = (await call("GET", "/api/estudiantes", undefined, DOC)).json();
+  const fila = docente.estudiantes.find((x: any) => x.codigo === e.codigo);
+  assert.equal(fila.preprueba && fila.posprueba, true);
+
+  await call("DELETE", "/api/mi-registro", undefined, e.token);
+  assert.ok(!(await call("GET", "/api/export/rendimiento.csv", undefined, INV)).text.includes(e.codigo));
+});
