@@ -2,14 +2,23 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-async function load(path) {
-  const source = ts.transpileModule(readFileSync(path, "utf8"), {
+const urls = new Map();
+// Transpila un módulo TS y sus imports relativos (cada uno como URL data:).
+function url(path) {
+  if (urls.has(path)) return urls.get(path);
+  let source = ts.transpileModule(readFileSync(path, "utf8"), {
     compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext },
   }).outputText;
-  return import("data:text/javascript;base64," + Buffer.from(source).toString("base64"));
+  const dir = path.slice(0, path.lastIndexOf("/") + 1);
+  source = source.replace(/from "\.\/([\w.-]+?)(\.ts)?"/g, (_, f) => `from "${url(dir + f + ".ts")}"`);
+  const u = "data:text/javascript;base64," + Buffer.from(source).toString("base64");
+  urls.set(path, u);
+  return u;
 }
+const load = (path) => import(url(path));
 const logic = await load("src/logic.ts");
 const data = await load("src/data.ts");
+const prueba = await load("src/prueba.ts");
 const { parse, fmt, actions, root, closed } = logic;
 test("Parser preserves precedence and associativity", () => {
   assert.equal(parse("A∧B→C").op, "→");
@@ -163,4 +172,42 @@ test("Summary/progress CSV and deletion on withdrawal", () => {
   assert.match(data.exportarProgresoCSV(), /"R1",2,3/);
   data.eliminarEstudiante("R1");
   assert.equal(data.listarEstudiantes().length, 0);
+});
+
+test("Prueba: las formas A y B son paralelas", () => {
+  const { A, B } = prueba.formas;
+  assert.equal(A.length, prueba.N_ITEMS);
+  assert.equal(B.length, prueba.N_ITEMS);
+  A.forEach((it, i) => {
+    assert.equal(it.tipo, B[i].tipo, `ítem ${i + 1}: mismo tipo`);
+    assert.equal(it.opciones.length, B[i].opciones.length);
+  });
+  for (const it of [...A, ...B]) {
+    assert.ok(it.correcta >= 0 && it.correcta < it.opciones.length);
+    assert.equal(new Set(it.opciones).size, it.opciones.length, "opciones sin repetir");
+  }
+});
+test("Prueba: la clave de los ítems de validez coincide con las tablas de verdad", () => {
+  for (const it of [...prueba.formas.A, ...prueba.formas.B].filter((x) => x.tipo === "validez"))
+    assert.equal(it.correcta === 0, prueba.esValido(it.secuente), it.secuente);
+});
+test("Prueba: en los ítems de completar, la línea faltante tiene una sola opción posible", () => {
+  for (const it of [...prueba.formas.A, ...prueba.formas.B].filter((x) => x.tipo === "completar")) {
+    const i = it.lineas.findIndex((l) => l.f === "?");
+    assert.ok(i >= 0);
+    // la respuesta correcta se sigue de las líneas anteriores
+    const previas = it.lineas.slice(0, i).map((l) => l.f).filter((f) => f !== "Supuesto");
+    assert.equal(prueba.esValido(previas.join(", ") + " ⊢ " + it.opciones[it.correcta]), true, it.enunciado);
+  }
+});
+test("Prueba: calificación por tipo y en blanco", () => {
+  const claves = prueba.formas.A.map((x) => x.correcta);
+  const c = prueba.calificar("inicial", claves);
+  assert.equal(c.aciertos, 9);
+  assert.equal(c.puntaje, 100);
+  assert.deepEqual(c.porTipo, { regla: 3, validez: 3, completar: 3 });
+  const vacia = prueba.calificar("final", Array(9).fill(null));
+  assert.equal(vacia.aciertos, 0);
+  const medidas = data.medidasPrueba("inicial", claves, Array(9).fill(2000));
+  assert.deepEqual(Object.fromEntries(medidas).tiempo_total_s, 18);
 });

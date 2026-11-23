@@ -2,7 +2,8 @@ import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, randomInt, createHash, timingSafeEqual } from "node:crypto";
 import { root, verifyProof, closed, fmt, type Goal } from "../src/logic.ts";
-import { sessions, medidas, toCSV } from "../src/data.ts";
+import { sessions, medidas, medidasPrueba, toCSV } from "../src/data.ts";
+import { calificar, formaDe, formas, N_ITEMS, type Momento } from "../src/prueba.ts";
 
 export type Config = {
   dbFile: string;
@@ -55,6 +56,7 @@ export function crearApp(cfg: Config) {
     CREATE TABLE IF NOT EXISTS progreso (codigo TEXT NOT NULL REFERENCES codigos(codigo), sesion INTEGER NOT NULL, nivel INTEGER NOT NULL, fecha TEXT NOT NULL, PRIMARY KEY (codigo, sesion, nivel));
     CREATE TABLE IF NOT EXISTS respuestas (codigo TEXT NOT NULL REFERENCES codigos(codigo), instrumento TEXT NOT NULL, momento TEXT NOT NULL, item INTEGER NOT NULL, valor INTEGER NOT NULL, fecha TEXT NOT NULL, PRIMARY KEY (codigo, instrumento, momento, item));
     CREATE TABLE IF NOT EXISTS reflexiones (codigo TEXT NOT NULL REFERENCES codigos(codigo), sesion INTEGER NOT NULL, texto TEXT NOT NULL, fecha TEXT NOT NULL, PRIMARY KEY (codigo, sesion));
+    CREATE TABLE IF NOT EXISTS pruebas (codigo TEXT NOT NULL REFERENCES codigos(codigo), momento TEXT NOT NULL CHECK (momento IN ('inicial','final')), item INTEGER NOT NULL, respuesta INTEGER, correcta INTEGER NOT NULL, tiempo_ms INTEGER NOT NULL, inicio TEXT NOT NULL, fin TEXT NOT NULL, PRIMARY KEY (codigo, momento, item));
     CREATE TABLE IF NOT EXISTS taller (codigo TEXT PRIMARY KEY REFERENCES codigos(codigo), datos TEXT NOT NULL, fecha TEXT NOT NULL);
   `);
   const q = (sql: string) => db.prepare(sql);
@@ -117,6 +119,17 @@ export function crearApp(cfg: Config) {
     const i = sessions.findIndex((s, a) => s.levels.some((_, b) => !hechos.has(`${a + 1}-${b + 1}`)));
     return i < 0 ? 7 : i + 1;
   };
+  function pruebasDe(codigo: string) {
+    type P = { momento: Momento; respuestas: (number | null)[]; tiempos: number[]; inicio: string; fin: string };
+    const g = new Map<string, P>();
+    for (const r of q("SELECT momento, item, respuesta, tiempo_ms, inicio, fin FROM pruebas WHERE codigo=? ORDER BY momento, item").all(codigo) as any[]) {
+      const p: P = g.get(r.momento) || { momento: r.momento, respuestas: [], tiempos: [], inicio: r.inicio, fin: r.fin };
+      p.respuestas.push(r.respuesta);
+      p.tiempos.push(r.tiempo_ms);
+      g.set(r.momento, p);
+    }
+    return [...g.values()];
+  }
   function registro(c: { codigo: string; grupo: string; consentimiento: string }) {
     const t = q("SELECT datos FROM taller WHERE codigo=?").get(c.codigo) as any;
     const resp = new Map<string, number[]>();
@@ -132,6 +145,7 @@ export function crearApp(cfg: Config) {
       respuestas: [...resp].map(([k, valores]) => ({ instrumento: k.split("|")[0], momento: k.split("|")[1], valores })),
       reflexiones: q("SELECT sesion, texto FROM reflexiones WHERE codigo=?").all(c.codigo),
       taller: t ? JSON.parse(t.datos) : undefined,
+      pruebas: pruebasDe(c.codigo),
     };
   }
 
@@ -162,7 +176,7 @@ export function crearApp(cfg: Config) {
     if (m === "DELETE" && p === "/api/mi-registro") {
       const c = estudiante(req, false);
       tx(() => {
-        for (const t of ["progreso", "respuestas", "reflexiones", "taller", "sesiones", "estudiantes"]) q(`DELETE FROM ${t} WHERE codigo=?`).run(c.codigo);
+        for (const t of ["progreso", "respuestas", "pruebas", "reflexiones", "taller", "sesiones", "estudiantes"]) q(`DELETE FROM ${t} WHERE codigo=?`).run(c.codigo);
         q("UPDATE codigos SET retirado=1 WHERE codigo=?").run(c.codigo);
       });
       return { json: { ok: true } };
@@ -191,6 +205,22 @@ export function crearApp(cfg: Config) {
         b.valores.forEach((v: number, i: number) => q("INSERT INTO respuestas VALUES (?,?,?,?,?,?)").run(c.codigo, b.instrumento, b.momento, i + 1, v, ahora()));
       });
       return { json: { ok: true, medidas: medidas(b.instrumento, b.valores) } };
+    }
+    if (m === "PUT" && p === "/api/prueba") {
+      const c = estudiante(req),
+        b = await cuerpo(req);
+      const fecha = (x: any) => typeof x === "string" && x.length <= 40 && !Number.isNaN(Date.parse(x));
+      if (!["inicial", "final"].includes(b.momento)) throw new HttpError(400, "Momento inválido.");
+      const items = formas[formaDe[b.momento as Momento]];
+      if (!Array.isArray(b.respuestas) || b.respuestas.length !== N_ITEMS || !b.respuestas.every((r: any, i: number) => r === null || entero(r, 0, items[i].opciones.length - 1)))
+        throw new HttpError(400, "Respuestas inválidas.");
+      if (!Array.isArray(b.tiempos) || b.tiempos.length !== N_ITEMS || !b.tiempos.every((t: any) => entero(t, 0, 4 * 3600_000)) || !fecha(b.inicio) || !fecha(b.fin))
+        throw new HttpError(400, "Tiempos inválidos.");
+      if (b.momento === "final" && !q("SELECT 1 FROM pruebas WHERE codigo=? AND momento='inicial'").get(c.codigo)) throw new HttpError(409, "Primero debe presentarse la preprueba.");
+      if (q("SELECT 1 FROM pruebas WHERE codigo=? AND momento=?").get(c.codigo, b.momento)) throw new HttpError(409, "Esta prueba ya fue enviada.");
+      const cal = calificar(b.momento, b.respuestas);
+      tx(() => b.respuestas.forEach((r: number | null, i: number) => q("INSERT INTO pruebas VALUES (?,?,?,?,?,?,?,?)").run(c.codigo, b.momento, i + 1, r, cal.correctas[i] ? 1 : 0, b.tiempos[i], b.inicio, b.fin)));
+      return { json: { ok: true } };
     }
     if (m === "PUT" && p === "/api/reflexion") {
       const c = estudiante(req),
@@ -234,13 +264,15 @@ export function crearApp(cfg: Config) {
           consentimiento: !!r.consentimiento,
           sesionActual: sesionActual(r.codigo, t ? JSON.parse(t.datos) : undefined),
           nivelesResueltos: (q("SELECT COUNT(*) n FROM progreso WHERE codigo=?").get(r.codigo) as any).n,
+          preprueba: !!q("SELECT 1 FROM pruebas WHERE codigo=? AND momento='inicial'").get(r.codigo),
+          posprueba: !!q("SELECT 1 FROM pruebas WHERE codigo=? AND momento='final'").get(r.codigo),
           ultimoAcceso: r.ultimo_acceso,
         };
       });
       return { json: { total: sessions.reduce((n, s) => n + s.levels.length, 0), estudiantes: filas } };
     }
     // --- investigador ---
-    const ex = /^\/api\/export\/(respuestas|resumen|progreso|reflexiones)\.csv$/.exec(p);
+    const ex = /^\/api\/export\/(respuestas|resumen|progreso|reflexiones|rendimiento)\.csv$/.exec(p);
     if (m === "GET" && ex) {
       admin(req, "investigador");
       const val = "WHERE c.retirado=0 AND e.consentimiento IS NOT NULL";
@@ -255,8 +287,21 @@ export function crearApp(cfg: Config) {
           g.set(k, { ...(g.get(k) || { k: [r.codigo, r.grupo, r.instrumento, r.momento], v: [] }), v: [...(g.get(k)?.v || []), r.valor] });
         }
         for (const { k, v } of g.values()) for (const [medida, valor] of medidas(k[2], v)) filas.push([...k, medida, valor]);
+        for (const r of q(`SELECT DISTINCT x.codigo, c.grupo FROM pruebas x JOIN codigos c USING (codigo) JOIN estudiantes e USING (codigo) ${val} ORDER BY 1`).all() as any[])
+          for (const pr of pruebasDe(r.codigo)) for (const [medida, valor] of medidasPrueba(pr.momento, pr.respuestas, pr.tiempos)) filas.push([r.codigo, r.grupo, "Prueba", pr.momento, medida, valor]);
         return { csv: toCSV(["codigo", "grupo", "instrumento", "momento", "medida", "valor"], filas), nombre: "resumen.csv" };
       }
+      if (tabla === "rendimiento")
+        return {
+          csv: toCSV(
+            ["codigo", "grupo", "momento", "forma", "item", "tipo", "respuesta", "correcta", "tiempo_ms", "inicio", "fin"],
+            (q(`SELECT x.*, c.grupo FROM pruebas x JOIN codigos c USING (codigo) JOIN estudiantes e USING (codigo) ${val} ORDER BY x.codigo, x.momento DESC, x.item`).all() as any[]).map((r) => [
+              r.codigo, r.grupo, r.momento, formaDe[r.momento as Momento], r.item, formas[formaDe[r.momento as Momento]][r.item - 1].tipo,
+              r.respuesta === null ? "" : String.fromCharCode(97 + r.respuesta), r.correcta, r.tiempo_ms, r.inicio, r.fin,
+            ]),
+          ),
+          nombre: "rendimiento.csv",
+        };
       if (tabla === "progreso")
         return { csv: toCSV(["codigo", "grupo", "sesion", "nivel", "fecha"], (q(`SELECT p.codigo, c.grupo, p.sesion, p.nivel, p.fecha FROM progreso p JOIN codigos c USING (codigo) JOIN estudiantes e USING (codigo) ${val} ORDER BY 1,3,4`).all() as any[]).map((r) => [r.codigo, r.grupo, r.sesion, r.nivel, r.fecha])), nombre: "progreso.csv" };
       return { csv: toCSV(["codigo", "grupo", "sesion", "texto"], (q(`SELECT x.codigo, c.grupo, x.sesion, x.texto FROM reflexiones x JOIN codigos c USING (codigo) JOIN estudiantes e USING (codigo) ${val} ORDER BY 1,3`).all() as any[]).map((r) => [r.codigo, r.grupo, r.sesion, r.texto])), nombre: "reflexiones.csv" };

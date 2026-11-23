@@ -13,6 +13,7 @@
     "test": "node --test core_test.mjs && node --test server/app.test.ts && vitest run src/test"
   },
   "dependencies": {
+    "@fontsource/libertinus-math": "^5.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

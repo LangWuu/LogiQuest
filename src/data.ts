@@ -1,4 +1,5 @@
 import type { Goal } from "./logic.ts";
+import { calificar, formaDe, formas, type Momento } from "./prueba.ts";
 export type TallerGuardado = {
   sesion: number;
   nivel: number;
@@ -16,7 +17,17 @@ export type RecordData = {
   ultimoAcceso: string;
   taller?: TallerGuardado;
   borradores?: { instrumento: string; momento: string; valores: Record<number, number> }[];
+  pruebas?: PruebaGuardada[];
+  pruebaBorrador?: PruebaBorrador;
 };
+export type PruebaGuardada = {
+  momento: Momento;
+  respuestas: (number | null)[];
+  tiempos: number[]; // milisegundos por ítem
+  inicio: string;
+  fin: string;
+};
+export type PruebaBorrador = { momento: Momento; respuestas: (number | null)[]; tiempos: number[]; inicio: string; actual: number };
 const key = "logiquest-datos";
 export function listarEstudiantes(): RecordData[] {
   try {
@@ -87,6 +98,34 @@ export function guardarBorradorRespuestas(
     r.borradores.push({ instrumento, momento, valores });
   });
 }
+export function guardarBorradorPrueba(codigo: string, b: PruebaBorrador | undefined) {
+  update(codigo, (r) => {
+    r.pruebaBorrador = b;
+  });
+}
+// Un solo intento por momento: si ya existe, no se sobrescribe.
+export function guardarPrueba(codigo: string, p: PruebaGuardada) {
+  update(codigo, (r) => {
+    r.pruebas ||= [];
+    if (!r.pruebas.some((x) => x.momento === p.momento)) r.pruebas.push(p);
+    r.pruebaBorrador = undefined;
+  });
+}
+export function exportarRendimientoCSV() {
+  return toCSV(
+    ["codigo", "momento", "forma", "item", "tipo", "respuesta", "correcta", "tiempo_ms"],
+    listarEstudiantes().flatMap((r) =>
+      (r.pruebas || []).flatMap((p) => {
+        const c = calificar(p.momento, p.respuestas);
+        return formas[formaDe[p.momento]].map((it, i) => [
+          r.codigo, p.momento, formaDe[p.momento], i + 1, it.tipo,
+          p.respuestas[i] === null ? "" : String.fromCharCode(97 + p.respuestas[i]!),
+          c.correctas[i] ? 1 : 0, p.tiempos[i] || 0,
+        ]);
+      }),
+    ),
+  );
+}
 export function guardarReflexion(codigo: string, sesion: number, texto: string) {
   update(codigo, (r) => {
     r.reflexiones = r.reflexiones.filter((x) => x.sesion !== sesion);
@@ -121,11 +160,25 @@ export function medidas(instrumento: string, valores: number[]): [string, number
     +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(2),
   ]);
 }
+export function medidasPrueba(momento: Momento, respuestas: (number | null)[], tiempos: number[]): [string, number][] {
+  const c = calificar(momento, respuestas);
+  return [
+    ["puntaje", c.puntaje],
+    ["aciertos", c.aciertos],
+    ["aciertos_regla", c.porTipo.regla],
+    ["aciertos_validez", c.porTipo.validez],
+    ["aciertos_completar", c.porTipo.completar],
+    ["tiempo_total_s", Math.round(tiempos.reduce((a, b) => a + b, 0) / 1000)],
+  ];
+}
 export function exportarResumenCSV() {
   return toCSV(
     ["codigo", "instrumento", "momento", "medida", "valor"],
     listarEstudiantes().flatMap((r) =>
-      r.respuestas.flatMap((a) => medidas(a.instrumento, a.valores).map(([m, v]) => [r.codigo, a.instrumento, a.momento, m, v])),
+      [
+        ...r.respuestas.flatMap((a) => medidas(a.instrumento, a.valores).map(([m, v]) => [r.codigo, a.instrumento, a.momento, m, v])),
+        ...(r.pruebas || []).flatMap((p) => medidasPrueba(p.momento, p.respuestas, p.tiempos).map(([m, v]) => [r.codigo, "Prueba", p.momento, m, v])),
+      ],
     ),
   );
 }
@@ -196,7 +249,7 @@ export const sessions = [
     rules: "Todas las reglas",
   },
 ];
-export function importarRegistro(r: Pick<RecordData, "codigo" | "consentimiento" | "progreso" | "respuestas" | "reflexiones" | "taller">) {
+export function importarRegistro(r: Pick<RecordData, "codigo" | "consentimiento" | "progreso" | "respuestas" | "reflexiones" | "taller" | "pruebas">) {
   const todos = listarEstudiantes().filter((x) => x.codigo !== r.codigo);
   todos.push({ ...r, borradores: [], ultimoAcceso: new Date().toISOString() });
   localStorage.setItem(key, JSON.stringify(todos));

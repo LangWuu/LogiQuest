@@ -12,6 +12,7 @@ import {
   eliminarEstudiante,
   exportarResumenCSV,
   exportarProgresoCSV,
+  exportarRendimientoCSV,
   importarRegistro,
 } from "./data";
 import {
@@ -25,123 +26,14 @@ import {
   grupo,
 } from "./sync";
 import { TeacherRemote, ExportRemote } from "./Admin";
+import { Icon } from "./Icon";
+import { PruebaPage } from "./Prueba.tsx";
 import { root, actions, closed, fmt, recommendation, type Goal, type Action } from "./logic.ts";
 
-type Page = "home" | "session" | "workshop" | "surveys" | "teacher" | "export" | "help" | "consent";
-function Icon({ name, size = 20, ...props }: { name: string; size?: number; className?: string }) {
-  const paths: Record<string, React.ReactNode> = {
-    home: (
-      <>
-        <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />
-      </>
-    ),
-    map: (
-      <>
-        <path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2zM9 3v16M15 5v16" />
-      </>
-    ),
-    book: (
-      <>
-        <path d="M12 5C8 2 3 4 3 4v15s5-2 9 1c4-3 9-1 9-1V4s-5-2-9 1v15" />
-      </>
-    ),
-    survey: (
-      <>
-        <rect x="5" y="4" width="14" height="17" rx="2" />
-        <path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h3" />
-      </>
-    ),
-    chart: (
-      <>
-        <path d="M4 3v17h17M8 16v-5M13 16V6M18 16V9" />
-      </>
-    ),
-    download: (
-      <>
-        <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" />
-      </>
-    ),
-    help: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.5 1-1.5 1-1.5 3M12 17h.01" />
-      </>
-    ),
-    arrow: (
-      <>
-        <path d="M4 12h16m-6-6 6 6-6 6" />
-      </>
-    ),
-    chevron: <path d="m9 5 7 7-7 7" />,
-    check: <path d="m5 12 4 4L19 6" />,
-    clock: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 7v5l3 2" />
-      </>
-    ),
-    sun: (
-      <>
-        <circle cx="12" cy="12" r="4" />
-        <path d="M12 1v2m0 18v2M1 12h2m18 0h2M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2" />
-      </>
-    ),
-    moon: <path d="M20 15.5A9 9 0 0 1 8.5 4 9 9 0 1 0 20 15.5Z" />,
-    back: <path d="M20 12H4m6-6-6 6 6 6" />,
-    reset: (
-      <>
-        <path d="M3 11a9 9 0 1 1 2 7M3 4v7h7" />
-      </>
-    ),
-    bulb: (
-      <>
-        <path d="M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 2H9s0-1-1-2Z" />
-      </>
-    ),
-    shield: (
-      <>
-        <path d="m12 2 8 3v6c0 6-8 11-8 11S4 17 4 11V5z" />
-        <path d="m8 11 3 3 5-5" />
-      </>
-    ),
-    user: (
-      <>
-        <circle cx="12" cy="8" r="4" />
-        <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
-      </>
-    ),
-    menu: <path d="M4 6h16M4 12h16M4 18h16" />,
-    copy: (
-      <>
-        <rect x="8" y="8" width="12" height="13" rx="2" />
-        <path d="M16 8V3H3v13h5" />
-      </>
-    ),
-    close: <path d="m6 6 12 12M18 6 6 18" />,
-    flag: (
-      <>
-        <path d="M5 22V3c5-4 9 4 15 0v11c-6 4-10-4-15 0" />
-      </>
-    ),
-  };
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.65"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      {...props}
-    >
-      {paths[name] || paths.book}
-    </svg>
-  );
-}
+export type Page = "home" | "session" | "workshop" | "test" | "surveys" | "teacher" | "export" | "help" | "consent";
 const nav = [
   { page: "home", icon: "map", label: "Mi aprendizaje" },
+  { page: "test", icon: "target", label: "Prueba de lógica" },
   { page: "surveys", icon: "survey", label: "Cuestionarios" },
   { page: "help", icon: "help", label: "Ayuda y recursos" },
 ] as const;
@@ -358,7 +250,15 @@ function App() {
           </span>
           <strong className="formula">{fmt(g.f)}</strong>
           <span className="goal-context">
-            Hipótesis: {g.hs.length ? g.hs.map(fmt).join(", ") : "sin hipótesis"}
+            {g.hs.length ? (
+              g.hs.map((h, i) => (
+                <span className="hyp formula" key={i}>
+                  {fmt(h)}
+                </span>
+              ))
+            ) : (
+              <span className="muted">Sin hipótesis</span>
+            )}
           </span>
         </button>
         {g.children?.map((c) => renderGoal(c, depth + 1))}
@@ -378,6 +278,7 @@ function App() {
     home: "Mi aprendizaje",
     session: "Ruta de aprendizaje",
     workshop: "Taller de pruebas",
+    test: "Prueba de lógica",
     surveys: "Cuestionarios",
     teacher: "Panel del docente",
     export: "Exportar datos",
@@ -771,7 +672,7 @@ function App() {
                   </li>
                   <li>
                     Se registra tu consentimiento, progreso, intentos de prueba, borradores,
-                    reflexiones y respuestas a cuestionarios. Los códigos deben ser anónimos: no
+                    reflexiones, respuestas a cuestionarios y a la prueba de deducción natural. Los códigos deben ser anónimos: no
                     uses tu número de documento.
                   </li>
                 </ul>
@@ -1020,8 +921,10 @@ function App() {
                 </label>
               </div>
               <div className="workshop-toolbar">
-                <span>
-                  <span className="tiny-dot" />
+                <span className="goal-meter">
+                  <span className="goal-meter-track" aria-hidden="true">
+                    <span style={{ width: `${(nodes.filter(closed).length / nodes.length) * 100}%` }} />
+                  </span>
                   {complete
                     ? "Prueba completada"
                     : `${nodes.filter(closed).length} de ${nodes.length} metas cerradas`}
@@ -1197,6 +1100,13 @@ function App() {
                 <strong>Último paso →</strong> {last}
               </div>
             </>
+          )}
+          {page === "test" && (
+            <PruebaPage
+              code={code}
+              aviso={setToast}
+              pedirConsentimiento={() => go("consent", "test")}
+            />
           )}
           {page === "surveys" && (
             <>
@@ -1431,6 +1341,8 @@ function App() {
                         <th>Código</th>
                         <th>Sesión actual</th>
                         <th>Niveles resueltos</th>
+                        <th>Preprueba</th>
+                        <th>Posprueba</th>
                         <th>Último acceso</th>
                       </tr>
                     </thead>
@@ -1454,12 +1366,20 @@ function App() {
                           <td>
                             {r.progreso.length} / {total}
                           </td>
+                          {(["inicial", "final"] as const).map((m) => {
+                            const ok = r.pruebas?.some((p) => p.momento === m);
+                            return (
+                              <td key={m}>
+                                <span className={`status-dot ${ok ? "ok" : ""}`}>{ok ? "Enviada" : "Pendiente"}</span>
+                              </td>
+                            );
+                          })}
                           <td>{new Date(r.ultimoAcceso).toLocaleString("es-CO")}</td>
                         </tr>
                       ))}
                       {!listarEstudiantes().length && (
                         <tr>
-                          <td colSpan={4} className="empty-state">
+                          <td colSpan={6} className="empty-state">
                             Aún no hay registros. Aparecerán cuando un estudiante acepte participar.
                           </td>
                         </tr>
@@ -1507,7 +1427,8 @@ function App() {
                   <h2>Recordatorios del estudio</h2>
                   <ul className="consent-list">
                     <li>
-                      Aplicar pruebas de entrada y salida <strong>en papel</strong>.
+                      Prueba de deducción natural: <strong>Forma A</strong> antes de la sesión 1 y{" "}
+                      <strong>Forma B</strong> al terminar, en ambos grupos (en la app o impresa).
                     </li>
                     <li>IMI: inicial y final, en ambos grupos.</li>
                     <li>Compromiso: al finalizar.</li>
@@ -1556,6 +1477,12 @@ function App() {
                       onClick={() => download(exportarResumenCSV(), "logiquest-resumen.csv")}
                     >
                       Resumen (SUS y subescalas)
+                    </button>
+                    <button
+                      className="btn secondary"
+                      onClick={() => download(exportarRendimientoCSV(), "logiquest-rendimiento.csv")}
+                    >
+                      Rendimiento
                     </button>
                     <button
                       className="btn secondary"
